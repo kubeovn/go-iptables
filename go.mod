@@ -1,3 +1,3 @@
-module github.com/coreos/go-iptables
+module github.com/kubeovn/go-iptables
 
-go 1.16
+go 1.19

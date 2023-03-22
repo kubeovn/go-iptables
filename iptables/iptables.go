@@ -106,6 +106,12 @@ func IPFamily(proto Protocol) option {
 	}
 }
 
+func Mode(mode string) option {
+	return func(ipt *IPTables) {
+		ipt.mode = mode
+	}
+}
+
 func Timeout(timeout int) option {
 	return func(ipt *IPTables) {
 		ipt.timeout = timeout
@@ -145,7 +151,7 @@ func New(opts ...option) (*IPTables, error) {
 	// if path wasn't preset through New(Path()), autodiscover it
 	cmd := ""
 	if ipt.path == "" {
-		cmd = getIptablesCommand(ipt.proto)
+		cmd = getIptablesCommand(ipt.proto, ipt.mode)
 	} else {
 		cmd = ipt.path
 	}
@@ -181,6 +187,10 @@ func New(opts ...option) (*IPTables, error) {
 // The proto will determine which command is used, either "iptables" or "ip6tables".
 func NewWithProtocol(proto Protocol) (*IPTables, error) {
 	return New(IPFamily(proto), Timeout(0))
+}
+
+func NewWithProtocolAndMode(proto Protocol, mode string) (*IPTables, error) {
+	return New(IPFamily(proto), Mode(mode), Timeout(0))
 }
 
 // Proto returns the protocol used by this IPTables.
@@ -605,12 +615,17 @@ func (ipt *IPTables) runWithOutput(args []string, stdout io.Writer) error {
 }
 
 // getIptablesCommand returns the correct command for the given protocol, either "iptables" or "ip6tables".
-func getIptablesCommand(proto Protocol) string {
+func getIptablesCommand(proto Protocol, mode string) string {
+	var cmd string
 	if proto == ProtocolIPv6 {
-		return "ip6tables"
+		cmd = "ip6tables"
 	} else {
-		return "iptables"
+		cmd = "iptables"
 	}
+	if mode != "" {
+		cmd = cmd + "-" + mode
+	}
+	return cmd
 }
 
 // Checks if iptables has the "-C" and "--wait" flag

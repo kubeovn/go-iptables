@@ -299,7 +299,7 @@ func TestRules(t *testing.T) {
 }
 
 func runRulesTests(t *testing.T, ipt *IPTables) {
-	t.Logf("testing %s (hasWait=%t, hasCheck=%t)", getIptablesCommand(ipt.Proto()), ipt.hasWait, ipt.hasCheck)
+	t.Logf("testing %s (hasWait=%t, hasCheck=%t)", getIptablesCommand(ipt.Proto(), ""), ipt.hasWait, ipt.hasCheck)
 
 	var address1, address2, address3, address4, subnet1, subnet2, subnet3, subnet4 string
 	if ipt.Proto() == ProtocolIPv6 {
