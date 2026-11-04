@@ -70,6 +70,54 @@ func TestTimeout(t *testing.T) {
 
 }
 
+// force usage of -legacy or -nft commands and check that they're detected correctly
+func TestLegacyDetection(t *testing.T) {
+	testCases := []struct {
+		in   string
+		mode string
+		err  bool
+	}{
+		{
+			"iptables-legacy",
+			"legacy",
+			false,
+		},
+		{
+			"ip6tables-legacy",
+			"legacy",
+			false,
+		},
+		{
+			"iptables-nft",
+			"nf_tables",
+			false,
+		},
+		{
+			"ip6tables-nft",
+			"nf_tables",
+			false,
+		},
+	}
+
+	for i, tt := range testCases {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			ipt, err := New(Path(tt.in))
+			if err == nil && tt.err {
+				t.Fatal("expected err, got none")
+			} else if err != nil && !tt.err {
+				t.Fatalf("unexpected err %s", err)
+			}
+
+			if !strings.Contains(ipt.path, tt.in) {
+				t.Fatalf("Expected path %s in %s", tt.in, ipt.path)
+			}
+			if ipt.mode != tt.mode {
+				t.Fatalf("Expected %s iptables, but got %s", tt.mode, ipt.mode)
+			}
+		})
+	}
+}
+
 func randChain(t *testing.T) string {
 	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -131,7 +179,7 @@ func runChainTests(t *testing.T, ipt *IPTables) {
 	chain := randChain(t)
 
 	// Saving the list of chains before executing tests
-	originaListChain, err := ipt.ListChains("filter")
+	originalListChain, err := ipt.ListChains("filter")
 	if err != nil {
 		t.Fatalf("ListChains of Initial failed: %v", err)
 	}
@@ -204,8 +252,8 @@ func runChainTests(t *testing.T, ipt *IPTables) {
 	if err != nil {
 		t.Fatalf("ListChains failed: %v", err)
 	}
-	if !reflect.DeepEqual(originaListChain, listChain) {
-		t.Fatalf("ListChains mismatch: \ngot  %#v \nneed %#v", originaListChain, listChain)
+	if !reflect.DeepEqual(originalListChain, listChain) {
+		t.Fatalf("ListChains mismatch: \ngot  %#v \nneed %#v", originalListChain, listChain)
 	}
 
 	// ChainExists must not find it anymore
@@ -253,17 +301,25 @@ func TestRules(t *testing.T) {
 func runRulesTests(t *testing.T, ipt *IPTables) {
 	t.Logf("testing %s (hasWait=%t, hasCheck=%t)", getIptablesCommand(ipt.Proto(), ""), ipt.hasWait, ipt.hasCheck)
 
-	var address1, address2, subnet1, subnet2 string
+	var address1, address2, address3, address4, subnet1, subnet2, subnet3, subnet4 string
 	if ipt.Proto() == ProtocolIPv6 {
 		address1 = "2001:db8::1/128"
 		address2 = "2001:db8::2/128"
+		address3 = "2001:db8::3/128"
+		address4 = "2001:db8::4/128"
 		subnet1 = "2001:db8:a::/48"
 		subnet2 = "2001:db8:b::/48"
+		subnet3 = "2001:db8:c::/48"
+		subnet4 = "2001:db8:d::/48"
 	} else {
 		address1 = "203.0.113.1/32"
 		address2 = "203.0.113.2/32"
+		address3 = "203.0.113.3/32"
+		address4 = "203.0.113.4/32"
 		subnet1 = "192.0.2.0/24"
 		subnet2 = "198.51.100.0/24"
+		subnet3 = "198.51.101.0/24"
+		subnet4 = "198.51.102.0/24"
 	}
 
 	chain := randChain(t)
@@ -309,6 +365,21 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
+	err = ipt.Insert("filter", chain, 1, "-s", subnet1, "-d", address2, "-j", "ACCEPT")
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	err = ipt.Replace("filter", chain, 1, "-s", subnet2, "-d", address2, "-j", "ACCEPT")
+	if err != nil {
+		t.Fatalf("Replace failed: %v", err)
+	}
+
+	err = ipt.Delete("filter", chain, "-s", subnet2, "-d", address2, "-j", "ACCEPT")
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
 	err = ipt.Append("filter", chain, "-s", address1, "-d", subnet2, "-j", "ACCEPT")
 	if err != nil {
 		t.Fatalf("Append failed: %v", err)
@@ -319,12 +390,32 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 		t.Fatalf("List failed: %v", err)
 	}
 
+	// Verify DeleteById functionality by adding two new rules and removing second last
+	ruleCount1 := len(rules)
+	err = ipt.Append("filter", chain, "-s", address3, "-d", subnet3, "-j", "ACCEPT")
+	if err != nil {
+		t.Fatalf("Append failed: %v", err)
+	}
+	err = ipt.Append("filter", chain, "-s", address4, "-d", subnet4, "-j", "ACCEPT")
+	if err != nil {
+		t.Fatalf("Append failed: %v", err)
+	}
+	err = ipt.DeleteById("filter", chain, ruleCount1)
+	if err != nil {
+		t.Fatalf("DeleteById failed: %v", err)
+	}
+	rules, err = ipt.List("filter", chain)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
 	expected := []string{
 		"-N " + chain,
 		"-A " + chain + " -s " + subnet1 + " -d " + address1 + " -j ACCEPT",
 		"-A " + chain + " -s " + subnet2 + " -d " + address2 + " -j ACCEPT",
 		"-A " + chain + " -s " + subnet2 + " -d " + address1 + " -j ACCEPT",
 		"-A " + chain + " -s " + address1 + " -d " + subnet2 + " -j ACCEPT",
+		"-A " + chain + " -s " + address4 + " -d " + subnet4 + " -j ACCEPT",
 	}
 
 	if !reflect.DeepEqual(rules, expected) {
@@ -336,21 +427,20 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 		t.Fatalf("ListWithCounters failed: %v", err)
 	}
 
-	suffix := " -c 0 0 -j ACCEPT"
-	if ipt.mode == "nf_tables" {
-		suffix = " -j ACCEPT -c 0 0"
+	makeExpected := func(suffix string) []string {
+		return []string{
+			"-N " + chain,
+			"-A " + chain + " -s " + subnet1 + " -d " + address1 + " " + suffix,
+			"-A " + chain + " -s " + subnet2 + " -d " + address2 + " " + suffix,
+			"-A " + chain + " -s " + subnet2 + " -d " + address1 + " " + suffix,
+			"-A " + chain + " -s " + address1 + " -d " + subnet2 + " " + suffix,
+			"-A " + chain + " -s " + address4 + " -d " + subnet4 + " " + suffix,
+		}
 	}
-
-	expected = []string{
-		"-N " + chain,
-		"-A " + chain + " -s " + subnet1 + " -d " + address1 + suffix,
-		"-A " + chain + " -s " + subnet2 + " -d " + address2 + suffix,
-		"-A " + chain + " -s " + subnet2 + " -d " + address1 + suffix,
-		"-A " + chain + " -s " + address1 + " -d " + subnet2 + suffix,
-	}
-
-	if !reflect.DeepEqual(rules, expected) {
-		t.Fatalf("ListWithCounters mismatch: \ngot  %#v \nneed %#v", rules, expected)
+	// older nf_tables returned the second order
+	if !reflect.DeepEqual(rules, makeExpected("-c 0 0 -j ACCEPT")) &&
+		!reflect.DeepEqual(rules, makeExpected("-j ACCEPT -c 0 0")) {
+		t.Fatalf("ListWithCounters mismatch: \ngot  %#v \nneed %#v", rules, makeExpected("<-c 0 0 and -j ACCEPT in either order>"))
 	}
 
 	stats, err := ipt.Stats("filter", chain)
@@ -359,15 +449,25 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 	}
 
 	opt := "--"
-	if ipt.proto == ProtocolIPv6 {
+	prot := "0"
+	if ipt.proto == ProtocolIPv6 &&
+		ipt.v1 == 1 && (ipt.v2 < 8 || (ipt.v2 == 8 && ipt.v3 < 9)) {
+		// this is fixed in iptables 1.8.9 via iptables/6e41c2d874
 		opt = "  "
+	}
+	// iptables releases render protocol zero as either "0" or "all".
+	for _, stat := range stats {
+		if stat[3] == "all" {
+			stat[3] = prot
+		}
 	}
 
 	expectedStats := [][]string{
-		{"0", "0", "ACCEPT", "all", opt, "*", "*", subnet1, address1, ""},
-		{"0", "0", "ACCEPT", "all", opt, "*", "*", subnet2, address2, ""},
-		{"0", "0", "ACCEPT", "all", opt, "*", "*", subnet2, address1, ""},
-		{"0", "0", "ACCEPT", "all", opt, "*", "*", address1, subnet2, ""},
+		{"0", "0", "ACCEPT", prot, opt, "*", "*", subnet1, address1, ""},
+		{"0", "0", "ACCEPT", prot, opt, "*", "*", subnet2, address2, ""},
+		{"0", "0", "ACCEPT", prot, opt, "*", "*", subnet2, address1, ""},
+		{"0", "0", "ACCEPT", prot, opt, "*", "*", address1, subnet2, ""},
+		{"0", "0", "ACCEPT", prot, opt, "*", "*", address4, subnet4, ""},
 	}
 
 	if !reflect.DeepEqual(stats, expectedStats) {
@@ -378,19 +478,27 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 	if err != nil {
 		t.Fatalf("StructuredStats failed: %v", err)
 	}
+	for i := range structStats {
+		if structStats[i].Protocol == "all" {
+			structStats[i].Protocol = prot
+		}
+	}
 
 	// It's okay to not check the following errors as they will be evaluated
 	// in the subsequent usage
 	_, address1CIDR, _ := net.ParseCIDR(address1)
 	_, address2CIDR, _ := net.ParseCIDR(address2)
+	_, address4CIDR, _ := net.ParseCIDR(address4)
 	_, subnet1CIDR, _ := net.ParseCIDR(subnet1)
 	_, subnet2CIDR, _ := net.ParseCIDR(subnet2)
+	_, subnet4CIDR, _ := net.ParseCIDR(subnet4)
 
 	expectedStructStats := []Stat{
-		{0, 0, "ACCEPT", "all", opt, "*", "*", subnet1CIDR, address1CIDR, ""},
-		{0, 0, "ACCEPT", "all", opt, "*", "*", subnet2CIDR, address2CIDR, ""},
-		{0, 0, "ACCEPT", "all", opt, "*", "*", subnet2CIDR, address1CIDR, ""},
-		{0, 0, "ACCEPT", "all", opt, "*", "*", address1CIDR, subnet2CIDR, ""},
+		{0, 0, "ACCEPT", prot, opt, "*", "*", subnet1CIDR, address1CIDR, ""},
+		{0, 0, "ACCEPT", prot, opt, "*", "*", subnet2CIDR, address2CIDR, ""},
+		{0, 0, "ACCEPT", prot, opt, "*", "*", subnet2CIDR, address1CIDR, ""},
+		{0, 0, "ACCEPT", prot, opt, "*", "*", address1CIDR, subnet2CIDR, ""},
+		{0, 0, "ACCEPT", prot, opt, "*", "*", address4CIDR, subnet4CIDR, ""},
 	}
 
 	if !reflect.DeepEqual(structStats, expectedStructStats) {
