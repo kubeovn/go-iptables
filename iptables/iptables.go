@@ -128,6 +128,7 @@ func Path(path string) option {
 // Supported parameters are:
 //
 //	IPFamily(Protocol)
+//	Mode(string)
 //	Timeout(int)
 //	Path(string)
 //
