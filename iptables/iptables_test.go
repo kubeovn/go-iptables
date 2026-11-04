@@ -454,13 +454,12 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 		ipt.v1 == 1 && (ipt.v2 < 8 || (ipt.v2 == 8 && ipt.v3 < 9)) {
 		// this is fixed in iptables 1.8.9 via iptables/6e41c2d874
 		opt = "  "
-		// this is fixed in iptables 1.8.9 via iptables/da8ecc62dd
-		prot = "all"
 	}
-	if ipt.proto == ProtocolIPv4 &&
-		ipt.v1 == 1 && (ipt.v2 < 8 || (ipt.v2 == 8 && ipt.v3 < 9)) {
-		// this is fixed in iptables 1.8.9 via iptables/da8ecc62dd
-		prot = "all"
+	// iptables releases render protocol zero as either "0" or "all".
+	for _, stat := range stats {
+		if stat[3] == "all" {
+			stat[3] = prot
+		}
 	}
 
 	expectedStats := [][]string{
@@ -478,6 +477,11 @@ func runRulesTests(t *testing.T, ipt *IPTables) {
 	structStats, err := ipt.StructuredStats("filter", chain)
 	if err != nil {
 		t.Fatalf("StructuredStats failed: %v", err)
+	}
+	for i := range structStats {
+		if structStats[i].Protocol == "all" {
+			structStats[i].Protocol = prot
+		}
 	}
 
 	// It's okay to not check the following errors as they will be evaluated
